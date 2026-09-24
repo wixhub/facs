@@ -1,0 +1,15 @@
+<div class="header-panel">
+  <div class="title-row">
+    <h2>MicroExpression Engine Live Stream</h2>
+
+    @if (wasmService.isLoading()) {
+      <div class="badge info">Engine: Loading...</div>
+    } @else if (wasmService.loadError()) {
+      <div class="badge error" [title]="wasmService.loadError()">Engine: Error</div>
+    } @else if (wasmService.isLoaded()) {
+      <div class="badge ready">Engine: Active</div>
+    } @else {
+      <div class="badge info">Engine: Standby</div>
+    }
+  </div>
+</div>

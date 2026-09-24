@@ -1,0 +1,76 @@
+<h3>FACS Telemetry & Action Units Dashboard</h3>
+
+@if (metrics(); as m) {
+  <div class="metrics-container">
+    <div class="card-section detailed-emotion-block">
+      <div class="metric-row">
+        <span class="metric-label">Dominant Micro-Expression</span>
+        <span class="metric-value highlight">{{ m.dominantEmotion }}</span>
+      </div>
+
+      <div class="metric-row">
+        <span class="metric-label">Valence Score (Positivity)</span>
+        <span
+          class="metric-value"
+          [class.positive]="m.valenceScore > 0"
+          [class.negative]="m.valenceScore < 0"
+        >
+          {{ m.valenceScore > 0 ? '+' : '' }}{{ m.valenceScore.toFixed(2) }}
+        </span>
+      </div>
+
+      <div class="metric-row">
+        <span class="metric-label">Emotional Arousal / Intensity</span>
+        <span class="metric-value">{{ (m.arousalScore ?? 0.75).toFixed(2) }}</span>
+      </div>
+    </div>
+
+    <div class="section-title">Action Units (Intensity 0.0 - 1.0)</div>
+    <div class="au-grid">
+      <div class="au-item">
+        <span class="au-name">AU1 (Inner Brow Raiser)</span>
+        <span class="au-val">{{ m.actionUnits.au1_innerBrowRaiser.toFixed(3) }}</span>
+      </div>
+      <div class="au-item">
+        <span class="au-name">AU2 (Outer Brow Raiser)</span>
+        <span class="au-val">{{ m.actionUnits.au2_outerBrowRaiser.toFixed(3) }}</span>
+      </div>
+      <div class="au-item">
+        <span class="au-name">AU4 (Brow Lowerer)</span>
+        <span class="au-val">{{ m.actionUnits.au4_browLowerer.toFixed(3) }}</span>
+      </div>
+      <div class="au-item">
+        <span class="au-name">AU5 (Upper Lid Raiser)</span>
+        <span class="au-val">{{ m.actionUnits.au5_upperLidRaiser.toFixed(3) }}</span>
+      </div>
+      <div class="au-item">
+        <span class="au-name">AU6 (Cheek Raiser)</span>
+        <span class="au-val">{{ m.actionUnits.au6_cheekRaiser.toFixed(3) }}</span>
+      </div>
+      <div class="au-item">
+        <span class="au-name">AU9 (Nose Wrinkler)</span>
+        <span class="au-val">{{ m.actionUnits.au9_noseWrinkler.toFixed(3) }}</span>
+      </div>
+      <div class="au-item">
+        <span class="au-name">AU12 (Lip Corner Puller)</span>
+        <span class="au-val">{{ m.actionUnits.au12_lipCornerPuller.toFixed(3) }}</span>
+      </div>
+      <div class="au-item">
+        <span class="au-name">AU15 (Lip Corner Depressor)</span>
+        <span class="au-val">{{ m.actionUnits.au15_lipCornerDepressor.toFixed(3) }}</span>
+      </div>
+      <div class="au-item">
+        <span class="au-name">AU17 (Chin Raiser)</span>
+        <span class="au-val">{{ m.actionUnits.au17_chinRaiser.toFixed(3) }}</span>
+      </div>
+      <div class="au-item">
+        <span class="au-name">AU25 (Lips Part)</span>
+        <span class="au-val">{{ m.actionUnits.au25_lipsPart.toFixed(3) }}</span>
+      </div>
+    </div>
+  </div>
+} @else {
+  <div class="no-data">Initializing engine and awaiting facial mesh tracking...</div>
+}
+
+<app-footer />
