@@ -1,8 +1,10 @@
-# Micro Expression Engine 🔬🧠
+# Micro Expression Engine 🔬🧠 C++20 / WebAssembly / Angular
 
-> **High-performance real-time facial expression and micro-expression analysis platform, powered by native C++ compiled to WebAssembly (WASM) and Angular 22.**
+A high-performance, real-time facial telemetry and micro-expression analysis web application. The core detection engine is written in **C++20**, compiled to **WebAssembly (WASM)** via **Emscripten** and **Ninja**, and integrated into a modern **Angular** frontend using Signals and reactive components.
 
----
+![Engine Status](https://img.shields.io/badge/Engine-C%2B%2B20%20%2F%20WASM-blue)
+![Frontend](https://img.shields.io/badge/Frontend-Angular-red)
+![License](https://img.shields.io/badge/License-MIT-green)
 
 ## 🌟 About the Project
 
@@ -16,13 +18,15 @@ Because the core mathematical and computer vision algorithms run via **WebAssemb
 
 ## 🚀 Key Features
 
-- **WASM-Powered Performance:** Heavy matrix operations and facial landmark/geometry calculations run natively in the browser via C++ compiled with Emscripten.
+- **High-Performance WASM Engine:** Heavy matrix operations and facial landmark/geometry calculations run natively in the browser via C++20 compiled with Emscripten and Ninja, ensuring zero server-side latency.
 
-- **FACS Quantitative Mapping:** Translates subtle facial muscle movements into precise, objective numerical metrics and action unit intensity scores.
+- **Full FACS Telemetry Dashboard:** Measures 10 distinct Facial Action Units (AU1, AU2, AU4, AU5, AU6, AU9, AU12, AU15, AU17, AU25) with normalized intensities ranging from `0.0` to `1.0`.
 
-- **Real-Time Visual Overlay:** Utilizes HTML5 Canvas to render active mimic zones, facial meshes and emotional timelines dynamically over live webcam or video feeds.
+- **Emotion & Valence Classification:** Evaluates dominant emotions and positive/negative valence scoring on-the-fly.
 
-- **Modern Angular Architecture:** Built using **Angular (Signals)** within an enterprise-grade standalone structure, ensuring reactive, predictable and high-performance state management.
+- **Dual Source Support:** Switch seamlessly between a pre-recorded demo video and a live webcam stream.
+
+- **Modern Angular Architecture:** Built using **Angular (Signals)** within a standalone structure, ensuring reactive, predictable, and high-performance state management.
 
 - **Client-Side Privacy:** All video processing happens locally on the user's device—no external server storage or cloud streaming required.
 
@@ -32,9 +36,11 @@ Because the core mathematical and computer vision algorithms run via **WebAssemb
 
 - **Core & Processing:** C++20, OpenCV / Custom Math Matrix Library
 
-- **Compilation & Bridge:** Emscripten (C++ to WebAssembly, `emscripten/bind`)
+- **Compilation & Bridge:** Emscripten (C++ to WebAssembly, `emscripten/bind`), CMake, Ninja
 
 - **Frontend:** Angular, Signals, TypeScript, HTML5 Canvas, SCSS
+
+- **Computer Vision Pipeline**: Browser MediaPipe / Landmark detection feeding raw geometric coordinates into the C++ WASM engine.
 
 - **Tooling:** CMake, Vite, npm
 
@@ -45,19 +51,16 @@ Because the core mathematical and computer vision algorithms run via **WebAssemb
 ```text
 facs(micro-expression-engine)/
 ├── backend/               # C++ Computer Vision & Geometric Metric Engine
-│   ├── include/           # Header files (Facial zones, FACS calculators)
-│   ├── src/               # Core algorithms (matrix operations, landmark mapping)
-│   └── bindings.cpp       # Emscripten bindings (C++ to JS/WASM bridge)
+│   └── analyser.cpp       # C++ core source files and Emscripten bindings
 ├── frontend/              # Angular (Signals) + TypeScript + Canvas UI
 │   ├── src/
 │   │ ├── app/
 │   │ │ ├── core/          # WASM loader service & state management
 │   │ │ └── features/      # Camera feed, canvas overlay and real-time charts
-│   │ └── styles/
+│   │ └── styles.scss
 │   └── package.json
 ├── CMakeLists.txt         # Emscripten build configuration
 └── README.md
-
 ```
 
 ---
@@ -93,6 +96,10 @@ npm start
 Open your browser and navigate to `http://localhost:4200` to start analyzing micro-expressions in real time.
 
 ---
+
+## 📄 Demo Video Source
+
+The default sample video used for testing is provided courtesy of Pexels under the Pexels Free License.
 
 ## 📜 Academic Attribution & License
 
