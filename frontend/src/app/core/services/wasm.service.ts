@@ -4,7 +4,7 @@ import { ExpressionMetrics, Point2D } from '../models/expression.model';
 @Service()
 export class WasmService {
   /**
-   * @brief Modern Angular resource primitive managing the asynchronous lifecycle
+   * @brief Angular resource primitive managing the asynchronous lifecycle
    * of the WebAssembly module and C++ analyzer instance.
    */
   readonly wasmResource = resource({
@@ -44,22 +44,44 @@ export class WasmService {
   });
 
   /**
+   * @brief Resets the baseline calibration state in the C++ analyzer engine.
+   */
+  public resetBaseline(): void {
+    const analyzerInstance = this.wasmResource.value();
+    if (analyzerInstance && typeof analyzerInstance.resetBaseline === 'function') {
+      try {
+        analyzerInstance.resetBaseline();
+      } catch (e) {
+        console.error('Error resetting baseline in C++ engine:', e);
+      }
+    }
+  }
+
+  /**
    * @brief Analyzes facial landmarks using the C++ native engine via WebAssembly.
+   * Converts object-based Point2D array into a flat Float32Array to eliminate bridge overhead.
    * @param landmarks Array of 2D points representing the facial mesh.
    * @return ExpressionMetrics Calculated FACS Action Units and emotion metrics.
    */
   public analyzeLandmarks(landmarks: Point2D[]): ExpressionMetrics | null {
     const analyzerInstance = this.wasmResource.value();
 
-    if (!this.isLoaded() || !analyzerInstance) {
-      console.warn('WASM engine is not yet initialized.');
+    if (!this.isLoaded() || !analyzerInstance || !landmarks || landmarks.length === 0) {
       return null;
     }
 
     try {
-      const result = analyzerInstance.analyzeLandmarks(landmarks);
+      // 1. Pack individual JS point objects into a flat typed array: [x0, y0, x1, y1, ...]
+      const flatArray = new Float32Array(landmarks.length * 2);
+      for (let i = 0; i < landmarks.length; i++) {
+        flatArray[i * 2] = landmarks[i].x;
+        flatArray[i * 2 + 1] = landmarks[i].y;
+      }
 
-      // Map C++ engine response to the extended ExpressionMetrics interface
+      // 2. Send the fast typed array buffer to the C++ WebAssembly module
+      const result = analyzerInstance.analyzeLandmarks(flatArray);
+
+      // 3. Map C++ engine response to the extended ExpressionMetrics interface
       return {
         dominantEmotion: result.dominantEmotion ?? 'Neutral',
         valenceScore: result.valenceScore ?? 0.0,
