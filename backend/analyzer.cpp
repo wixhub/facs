@@ -7,6 +7,77 @@
 
 using namespace emscripten;
 
+// ==========================================
+// CONFIGURATION & CONSTANTS
+// ==========================================
+namespace Config
+{
+    // MediaPipe Face Mesh structural specifications
+    constexpr size_t EXPECTED_LANDMARKS_COUNT = 468;
+
+    // Calibration settings for cross-user adaptability
+    namespace Calibration
+    {
+        constexpr int TARGET_FRAMES = 45; // Number of initial frames to compute neutral baseline
+    }
+
+    // MediaPipe Canonical Landmark Indices
+    namespace Landmarks
+    {
+        constexpr int LEFT_EYE_TOP = 159;
+        constexpr int LEFT_EYE_BOTTOM = 145;
+        constexpr int LEFT_EYE_OUTER = 33;
+        constexpr int LEFT_EYE_INNER = 133;
+        constexpr int RIGHT_EYE_INNER = 362;
+        constexpr int RIGHT_EYE_OUTER = 263;
+
+        constexpr int MOUTH_LEFT_CORNER = 61;
+        constexpr int MOUTH_RIGHT_CORNER = 291;
+        constexpr int MOUTH_TOP_CENTER = 13;
+        constexpr int MOUTH_BOTTOM_CENTER = 14;
+        constexpr int MOUTH_LOWER_CORNER_REF = 14;
+
+        constexpr int BROW_INNER_LEFT = 70;
+        constexpr int BROW_INNER_RIGHT = 300;
+        constexpr int BROW_FURROW_LEFT = 107;
+        constexpr int BROW_FURROW_RIGHT = 336;
+        constexpr int NOSE_BRIDGE = 168;
+        constexpr int NOSE_TIP = 6;
+        constexpr int CHIN_TOP = 18;
+        constexpr int CHIN_BOTTOM = 152;
+    }
+
+    // Action Units (FACS) Relative Sensitivity Scaling Constants
+    namespace Thresholds
+    {
+        constexpr float BROW_RATIO_SCALE = 8.0f;
+        constexpr float OUTER_BROW_SCALE = 6.0f;
+        constexpr float BROW_FURROW_SCALE = 8.0f;
+        constexpr float EYE_APERTURE_SCALE = 10.0f;
+        constexpr float EYE_SQUINT_SCALE = 8.0f;
+        constexpr float NOSE_BRIDGE_SCALE = 6.0f;
+        constexpr float MOUTH_WIDTH_SCALE = 10.0f;
+        constexpr float MOUTH_CORNER_DROP_SCALE = 8.0f;
+        constexpr float CHIN_RAISE_SCALE = 5.0f;
+        constexpr float LIPS_PART_SCALE = 8.0f;
+    }
+
+    // Emotion Classification Delta Thresholds (activation over baseline)
+    namespace Emotions
+    {
+        constexpr float SMILE_ACTIVATION_LIMIT = 0.25f;
+        constexpr float CONCENTRATION_ACTIVATION_LIMIT = 0.22f;
+        constexpr float SADNESS_ACTIVATION_LIMIT = 0.20f;
+        constexpr float SURPRISE_ACTIVATION_LIMIT = 0.25f;
+    }
+
+    // Temporal Smoothing Parameters
+    namespace Smoothing
+    {
+        constexpr float EMA_ALPHA = 0.25f; // Smoothing factor (lower = smoother)
+    }
+}
+
 /**
  * @brief Represents a 2D coordinate point on the facial landmark grid.
  */
@@ -17,7 +88,7 @@ struct Point2D
 };
 
 /**
- * @brief Represents FACS (Facial Action Coding System) Action Units intensities (0.0 to 1.0).
+ * @brief Represents FACS Action Units intensities (0.0 to 1.0).
  */
 struct ActionUnits
 {
@@ -56,139 +127,273 @@ struct ExpressionMetrics
 };
 
 /**
- * @brief High-performance analytical engine for micro-expression feature extraction.
+ * @brief High-performance analytical engine for micro-expression feature extraction
+ * featuring adaptive baseline calibration and temporal smoothing (EMA).
  */
 class MicroExpressionAnalyzer
 {
 public:
-    MicroExpressionAnalyzer() = default;
+    MicroExpressionAnalyzer()
+        : isCalibrated(false),
+          calibrationFrameCount(0),
+          isInitialized(false)
+    {
+        resetBaselineState();
+    }
+
     ~MicroExpressionAnalyzer() = default;
 
     /**
-     * @brief Computes facial geometry and FACS Action Units from raw 2D landmark arrays.
-     * @param jsLandmarks JavaScript array of objects containing {x, y} coordinates.
+     * @brief Resets the calibration state to allow recalibrating a new user or session.
+     */
+    void resetBaseline()
+    {
+        isCalibrated = false;
+        calibrationFrameCount = 0;
+        accumEyeAperture = 0.0f;
+        accumMouthWidth = 0.0f;
+        accumBrowFurrow = 0.0f;
+        accumInnerBrow = 0.0f;
+        accumOuterBrow = 0.0f;
+        accumNoseBridge = 0.0f;
+        accumCornerDrop = 0.0f;
+        accumChinDist = 0.0f;
+        accumMouthVert = 0.0f;
+        isInitialized = false;
+        printf("C++ Engine Info: Baseline calibration reset successfully.\n");
+    }
+
+    /**
+     * @brief Computes facial geometry, adapts to user baseline, calculates FACS Action Units, and smooths output.
+     * @param jsFloat32Array JavaScript Float32Array containing interleaved [x0, y0, x1, y1, ...] coordinates.
      * @return ExpressionMetrics Calculated telemetry and action units.
      */
-    ExpressionMetrics analyzeLandmarks(const val &jsLandmarks)
+    ExpressionMetrics analyzeLandmarks(const val &jsFloat32Array)
     {
-        std::vector<Point2D> landmarks = convertJsLandmarks(jsLandmarks);
+        std::vector<Point2D> landmarks = convertJsLandmarksFast(jsFloat32Array);
 
-        // Default initialized metrics
-        ExpressionMetrics metrics;
-        metrics.dominantEmotion = "Initializing...";
-        metrics.valenceScore = 0.0f;
-        metrics.arousalScore = 0.0f;
-        metrics.actionUnits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        metrics.ratios = {0.0f, 0.0f, 0.0f};
+        ExpressionMetrics rawMetrics;
+        rawMetrics.valenceScore = 0.0f;
+        rawMetrics.arousalScore = 0.0f;
+        rawMetrics.actionUnits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        rawMetrics.ratios = {0.0f, 0.0f, 0.0f};
 
-        // MediaPipe Face Mesh provides 468 or 478 points
-        if (landmarks.size() < 468)
+        if (landmarks.size() < Config::EXPECTED_LANDMARKS_COUNT)
         {
-            printf("C++ Engine Warning: Insufficient landmarks count = %zu (expected >= 468)\n", landmarks.size());
-            metrics.dominantEmotion = "Insufficient Landmarks";
-            return metrics;
+            rawMetrics.dominantEmotion = "Insufficient Landmarks";
+            return rawMetrics;
         }
 
-        // 1. Calculate geometric features using MediaPipe canonical indices
-        float eyeVertical = calculateDistance(landmarks[159], landmarks[145]);
-        float eyeHorizontal = calculateDistance(landmarks[33], landmarks[133]);
-        metrics.ratios.eyeApertureRatio = (eyeHorizontal > 0.0f) ? (eyeVertical / eyeHorizontal) : 0.0f;
+        using namespace Config::Landmarks;
+        using namespace Config::Thresholds;
 
-        float mouthWidth = calculateDistance(landmarks[61], landmarks[291]);
-        float interOcularDist = calculateDistance(landmarks[33], landmarks[263]);
-        metrics.ratios.mouthWidthRatio = (interOcularDist > 0.0f) ? (mouthWidth / interOcularDist) : 0.0f;
+        // 1. Calculate raw geometric features using canonical indices
+        float eyeVertical = calculateDistance(landmarks[LEFT_EYE_TOP], landmarks[LEFT_EYE_BOTTOM]);
+        float eyeHorizontal = calculateDistance(landmarks[LEFT_EYE_OUTER], landmarks[LEFT_EYE_INNER]);
+        float currentEyeAperture = (eyeHorizontal > 0.0f) ? (eyeVertical / eyeHorizontal) : 0.0f;
 
-        metrics.ratios.browFurrowDistance = calculateDistance(landmarks[107], landmarks[336]);
+        float mouthWidth = calculateDistance(landmarks[MOUTH_LEFT_CORNER], landmarks[MOUTH_RIGHT_CORNER]);
+        float interOcularDist = calculateDistance(landmarks[LEFT_EYE_OUTER], landmarks[RIGHT_EYE_OUTER]);
+        float currentMouthWidthRatio = (interOcularDist > 0.0f) ? (mouthWidth / interOcularDist) : 0.0f;
 
-        // 2. Balanced mapping for FACS Action Units (normalized intensities 0.0 - 1.0)
+        float currentBrowFurrow = calculateDistance(landmarks[BROW_FURROW_LEFT], landmarks[BROW_FURROW_RIGHT]);
+        float currentInnerBrowRatio = calculateDistance(landmarks[BROW_INNER_LEFT], landmarks[BROW_INNER_RIGHT]) / interOcularDist;
+        float currentOuterBrowDist = calculateDistance(landmarks[BROW_INNER_LEFT], landmarks[LEFT_EYE_OUTER]) / interOcularDist;
+        float currentNoseBridgeDist = calculateDistance(landmarks[NOSE_BRIDGE], landmarks[NOSE_TIP]) / interOcularDist;
+        float currentMouthCornerDrop = calculateDistance(landmarks[MOUTH_LEFT_CORNER], landmarks[MOUTH_LOWER_CORNER_REF]) / interOcularDist;
+        float currentChinDist = calculateDistance(landmarks[CHIN_TOP], landmarks[CHIN_BOTTOM]) / interOcularDist;
+        float currentMouthVertical = calculateDistance(landmarks[MOUTH_TOP_CENTER], landmarks[MOUTH_BOTTOM_CENTER]) / interOcularDist;
 
-        // AU1: Inner Brow Raiser
-        float innerBrowDist = calculateDistance(landmarks[70], landmarks[300]);
-        float browRatio = innerBrowDist / interOcularDist;
-        metrics.actionUnits.au1_innerBrowRaiser = std::min(1.0f, std::max(0.0f, (browRatio - 0.32f) * 5.0f));
+        rawMetrics.ratios.eyeApertureRatio = currentEyeAperture;
+        rawMetrics.ratios.mouthWidthRatio = currentMouthWidthRatio;
+        rawMetrics.ratios.browFurrowDistance = currentBrowFurrow;
 
-        // AU2: Outer Brow Raiser
-        float leftOuterBrowDist = calculateDistance(landmarks[70], landmarks[33]);
-        metrics.actionUnits.au2_outerBrowRaiser = std::min(1.0f, std::max(0.0f, (leftOuterBrowDist / interOcularDist - 0.40f) * 4.0f));
-
-        // AU4: Brow Lowerer
-        float furrowNorm = metrics.ratios.browFurrowDistance / interOcularDist;
-        metrics.actionUnits.au4_browLowerer = std::min(1.0f, std::max(0.0f, (0.24f - furrowNorm) * 6.0f));
-
-        // AU5: Upper Lid Raiser
-        metrics.actionUnits.au5_upperLidRaiser = std::min(1.0f, std::max(0.0f, (metrics.ratios.eyeApertureRatio - 0.35f) * 8.0f));
-
-        // AU6: Cheek Raiser
-        float eyeSquint = 0.32f - metrics.ratios.eyeApertureRatio;
-        metrics.actionUnits.au6_cheekRaiser = std::min(1.0f, std::max(0.0f, eyeSquint * 6.0f));
-
-        // AU9: Nose Wrinkler
-        float noseBridgeDist = calculateDistance(landmarks[168], landmarks[6]);
-        metrics.actionUnits.au9_noseWrinkler = std::min(1.0f, std::max(0.0f, (0.15f - (noseBridgeDist / interOcularDist)) * 4.0f));
-
-        // AU12: Lip Corner Puller (Smile) - adjusted threshold
-        if (metrics.ratios.mouthWidthRatio > 0.52f)
+        // 2. Adaptive Calibration Phase
+        if (!isCalibrated)
         {
-            float smileIntensity = (metrics.ratios.mouthWidthRatio - 0.52f) * 6.0f;
-            metrics.actionUnits.au12_lipCornerPuller = std::min(1.0f, smileIntensity);
+            accumulateBaseline(currentEyeAperture, currentMouthWidthRatio, currentBrowFurrow,
+                               currentInnerBrowRatio, currentOuterBrowDist, currentNoseBridgeDist,
+                               currentMouthCornerDrop, currentChinDist, currentMouthVertical);
+
+            rawMetrics.dominantEmotion = "Calibrating baseline...";
+            return rawMetrics;
+        }
+
+        // 3. Map FACS Action Units intensities relative to personal baseline (Delta calculation)
+        auto &au = rawMetrics.actionUnits;
+
+        float innerBrowDelta = currentInnerBrowRatio - baselineInnerBrowRatio;
+        au.au1_innerBrowRaiser = std::min(1.0f, std::max(0.0f, innerBrowDelta * BROW_RATIO_SCALE));
+
+        float outerBrowDelta = currentOuterBrowDist - baselineOuterBrowDist;
+        au.au2_outerBrowRaiser = std::min(1.0f, std::max(0.0f, outerBrowDelta * OUTER_BROW_SCALE));
+
+        float furrowDelta = baselineRatios.browFurrowDistance - currentBrowFurrow;
+        au.au4_browLowerer = std::min(1.0f, std::max(0.0f, (furrowDelta / interOcularDist) * BROW_FURROW_SCALE));
+
+        float eyeApertureDelta = currentEyeAperture - baselineRatios.eyeApertureRatio;
+        au.au5_upperLidRaiser = std::min(1.0f, std::max(0.0f, eyeApertureDelta * EYE_APERTURE_SCALE));
+
+        float eyeSquintDelta = baselineRatios.eyeApertureRatio - currentEyeAperture;
+        au.au6_cheekRaiser = std::min(1.0f, std::max(0.0f, eyeSquintDelta * EYE_SQUINT_SCALE));
+
+        float noseDelta = baselineNoseBridgeDist - currentNoseBridgeDist;
+        au.au9_noseWrinkler = std::min(1.0f, std::max(0.0f, noseDelta * NOSE_BRIDGE_SCALE));
+
+        float mouthWidthDelta = currentMouthWidthRatio - baselineRatios.mouthWidthRatio;
+        au.au12_lipCornerPuller = std::min(1.0f, std::max(0.0f, mouthWidthDelta * MOUTH_WIDTH_SCALE));
+
+        float cornerDropDelta = currentMouthCornerDrop - baselineMouthCornerDrop;
+        au.au15_lipCornerDepressor = std::min(1.0f, std::max(0.0f, cornerDropDelta * MOUTH_CORNER_DROP_SCALE));
+
+        float chinDelta = baselineChinDist - currentChinDist;
+        au.au17_chinRaiser = std::min(1.0f, std::max(0.0f, chinDelta * CHIN_RAISE_SCALE));
+
+        float lipsPartDelta = currentMouthVertical - baselineMouthVertical;
+        au.au25_lipsPart = std::min(1.0f, std::max(0.0f, lipsPartDelta * LIPS_PART_SCALE));
+
+        // 4. Heuristic emotion classification based on dynamic deltas
+        using namespace Config::Emotions;
+        if (au.au12_lipCornerPuller > SMILE_ACTIVATION_LIMIT)
+        {
+            rawMetrics.dominantEmotion = "Smile / Positive Valence";
+            rawMetrics.valenceScore = 0.8f;
+            rawMetrics.arousalScore = 0.6f;
+        }
+        else if (au.au4_browLowerer > CONCENTRATION_ACTIVATION_LIMIT || au.au15_lipCornerDepressor > SADNESS_ACTIVATION_LIMIT)
+        {
+            rawMetrics.dominantEmotion = "Concentration / Sadness";
+            rawMetrics.valenceScore = -0.4f;
+            rawMetrics.arousalScore = 0.4f;
+        }
+        else if (au.au5_upperLidRaiser > SURPRISE_ACTIVATION_LIMIT)
+        {
+            rawMetrics.dominantEmotion = "Surprise / Alertness";
+            rawMetrics.valenceScore = 0.3f;
+            rawMetrics.arousalScore = 0.8f;
         }
         else
         {
-            metrics.actionUnits.au12_lipCornerPuller = 0.0f;
+            rawMetrics.dominantEmotion = "Neutral Baseline";
+            rawMetrics.valenceScore = 0.0f;
+            rawMetrics.arousalScore = 0.1f;
         }
 
-        // AU15: Lip Corner Depressor
-        float mouthCornerDrop = calculateDistance(landmarks[61], landmarks[14]) / interOcularDist;
-        metrics.actionUnits.au15_lipCornerDepressor = std::min(1.0f, std::max(0.0f, (0.18f - mouthCornerDrop) * 5.0f));
+        // 5. Temporal Smoothing (Exponential Moving Average - EMA)
+        const float alpha = Config::Smoothing::EMA_ALPHA;
 
-        // AU17: Chin Raiser
-        float chinDist = calculateDistance(landmarks[18], landmarks[152]) / interOcularDist;
-        metrics.actionUnits.au17_chinRaiser = std::min(1.0f, std::max(0.0f, (0.5f - chinDist) * 3.0f));
-
-        // AU25: Lips Part
-        float mouthVertical = calculateDistance(landmarks[13], landmarks[14]) / interOcularDist;
-        metrics.actionUnits.au25_lipsPart = std::min(1.0f, std::max(0.0f, (mouthVertical - 0.05f) * 5.0f));
-
-        // 3. Strict heuristic classification
-        if (metrics.actionUnits.au12_lipCornerPuller > 0.4f)
+        if (!isInitialized)
         {
-            metrics.dominantEmotion = "Smile / Positive Valence";
-            metrics.valenceScore = 0.8f;
-            metrics.arousalScore = 0.6f;
-        }
-        else if (metrics.actionUnits.au4_browLowerer > 0.35f || metrics.actionUnits.au15_lipCornerDepressor > 0.3f)
-        {
-            metrics.dominantEmotion = "Concentration / Sadness";
-            metrics.valenceScore = -0.4f;
-            metrics.arousalScore = 0.4f;
-        }
-        else if (metrics.actionUnits.au5_upperLidRaiser > 0.4f)
-        {
-            metrics.dominantEmotion = "Surprise / Alertness";
-            metrics.valenceScore = 0.3f;
-            metrics.arousalScore = 0.8f;
+            smoothedMetrics = rawMetrics;
+            isInitialized = true;
         }
         else
         {
-            metrics.dominantEmotion = "Neutral Baseline";
-            metrics.valenceScore = 0.0f;
-            metrics.arousalScore = 0.1f;
+            smoothedMetrics.ratios.eyeApertureRatio = alpha * rawMetrics.ratios.eyeApertureRatio + (1.0f - alpha) * smoothedMetrics.ratios.eyeApertureRatio;
+            smoothedMetrics.ratios.mouthWidthRatio = alpha * rawMetrics.ratios.mouthWidthRatio + (1.0f - alpha) * smoothedMetrics.ratios.mouthWidthRatio;
+            smoothedMetrics.ratios.browFurrowDistance = alpha * rawMetrics.ratios.browFurrowDistance + (1.0f - alpha) * smoothedMetrics.ratios.browFurrowDistance;
+
+            auto &sAU = smoothedMetrics.actionUnits;
+            const auto &rAU = rawMetrics.actionUnits;
+            sAU.au1_innerBrowRaiser = alpha * rAU.au1_innerBrowRaiser + (1.0f - alpha) * sAU.au1_innerBrowRaiser;
+            sAU.au2_outerBrowRaiser = alpha * rAU.au2_outerBrowRaiser + (1.0f - alpha) * sAU.au2_outerBrowRaiser;
+            sAU.au4_browLowerer = alpha * rAU.au4_browLowerer + (1.0f - alpha) * sAU.au4_browLowerer;
+            sAU.au5_upperLidRaiser = alpha * rAU.au5_upperLidRaiser + (1.0f - alpha) * sAU.au5_upperLidRaiser;
+            sAU.au6_cheekRaiser = alpha * rAU.au6_cheekRaiser + (1.0f - alpha) * sAU.au6_cheekRaiser;
+            sAU.au9_noseWrinkler = alpha * rAU.au9_noseWrinkler + (1.0f - alpha) * sAU.au9_noseWrinkler;
+            sAU.au12_lipCornerPuller = alpha * rAU.au12_lipCornerPuller + (1.0f - alpha) * sAU.au12_lipCornerPuller;
+            sAU.au15_lipCornerDepressor = alpha * rAU.au15_lipCornerDepressor + (1.0f - alpha) * sAU.au15_lipCornerDepressor;
+            sAU.au17_chinRaiser = alpha * rAU.au17_chinRaiser + (1.0f - alpha) * sAU.au17_chinRaiser;
+            sAU.au25_lipsPart = alpha * rAU.au25_lipsPart + (1.0f - alpha) * sAU.au25_lipsPart;
+
+            smoothedMetrics.valenceScore = alpha * rawMetrics.valenceScore + (1.0f - alpha) * smoothedMetrics.valenceScore;
+            smoothedMetrics.arousalScore = alpha * rawMetrics.arousalScore + (1.0f - alpha) * smoothedMetrics.arousalScore;
+            smoothedMetrics.dominantEmotion = rawMetrics.dominantEmotion;
         }
 
-        // Debug log output to browser console
-        // printf("C++ Engine Debug -> Emotion: %s | AU12: %.3f | AU1: %.3f | AU4: %.3f\n",
-        //        metrics.dominantEmotion.c_str(),
-        //        metrics.actionUnits.au12_lipCornerPuller,
-        //        metrics.actionUnits.au1_innerBrowRaiser,
-        //        metrics.actionUnits.au4_browLowerer);
-
-        return metrics;
+        return smoothedMetrics;
     }
 
 private:
-    /**
-     * @brief Computes Euclidean distance between two 2D points.
-     */
+    bool isCalibrated;
+    int calibrationFrameCount;
+    ExpressionRatios baselineRatios;
+    float baselineInnerBrowRatio;
+    float baselineOuterBrowDist;
+    float baselineNoseBridgeDist;
+    float baselineMouthCornerDrop;
+    float baselineChinDist;
+    float baselineMouthVertical;
+
+    float accumEyeAperture;
+    float accumMouthWidth;
+    float accumBrowFurrow;
+    float accumInnerBrow;
+    float accumOuterBrow;
+    float accumNoseBridge;
+    float accumCornerDrop;
+    float accumChinDist;
+    float accumMouthVert;
+
+    ExpressionMetrics smoothedMetrics;
+    bool isInitialized;
+
+    void resetBaselineState()
+    {
+        baselineRatios = {0.0f, 0.0f, 0.0f};
+        baselineInnerBrowRatio = 0.0f;
+        baselineOuterBrowDist = 0.0f;
+        baselineNoseBridgeDist = 0.0f;
+        baselineMouthCornerDrop = 0.0f;
+        baselineChinDist = 0.0f;
+        baselineMouthVertical = 0.0f;
+
+        accumEyeAperture = 0.0f;
+        accumMouthWidth = 0.0f;
+        accumBrowFurrow = 0.0f;
+        accumInnerBrow = 0.0f;
+        accumOuterBrow = 0.0f;
+        accumNoseBridge = 0.0f;
+        accumCornerDrop = 0.0f;
+        accumChinDist = 0.0f;
+        accumMouthVert = 0.0f;
+    }
+
+    void accumulateBaseline(float eyeApt, float mouthW, float furrow, float innerBrow,
+                            float outerBrow, float nose, float cornerDrop, float chin, float mouthVert)
+    {
+        accumEyeAperture += eyeApt;
+        accumMouthWidth += mouthW;
+        accumBrowFurrow += furrow;
+        accumInnerBrow += innerBrow;
+        accumOuterBrow += outerBrow;
+        accumNoseBridge += nose;
+        accumCornerDrop += cornerDrop;
+        accumChinDist += chin;
+        accumMouthVert += mouthVert;
+
+        calibrationFrameCount++;
+
+        if (calibrationFrameCount >= Config::Calibration::TARGET_FRAMES)
+        {
+            float floatFrames = static_cast<float>(Config::Calibration::TARGET_FRAMES);
+
+            baselineRatios.eyeApertureRatio = accumEyeAperture / floatFrames;
+            baselineRatios.mouthWidthRatio = accumMouthWidth / floatFrames;
+            baselineRatios.browFurrowDistance = accumBrowFurrow / floatFrames;
+
+            baselineInnerBrowRatio = accumInnerBrow / floatFrames;
+            baselineOuterBrowDist = accumOuterBrow / floatFrames;
+            baselineNoseBridgeDist = accumNoseBridge / floatFrames;
+            baselineMouthCornerDrop = accumCornerDrop / floatFrames;
+            baselineChinDist = accumChinDist / floatFrames;
+            baselineMouthVertical = accumMouthVert / floatFrames;
+
+            isCalibrated = true;
+            printf("C++ Engine Info: Adaptive baseline calibration completed successfully.\n");
+        }
+    }
+
     float calculateDistance(const Point2D &p1, const Point2D &p2) const
     {
         float dx = p1.x - p2.x;
@@ -196,21 +401,20 @@ private:
         return std::sqrt(dx * dx + dy * dy);
     }
 
-    /**
-     * @brief Converts a JavaScript array of point objects into a C++ std::vector.
-     */
-    std::vector<Point2D> convertJsLandmarks(const val &jsArray) const
+    std::vector<Point2D> convertJsLandmarksFast(const val &jsFloat32Array) const
     {
-        std::vector<Point2D> points;
-        int length = jsArray["length"].as<int>();
-        points.reserve(length);
+        int length = jsFloat32Array["length"].as<int>();
+        int numPoints = length / 2;
 
-        for (int i = 0; i < length; ++i)
+        std::vector<Point2D> points;
+        points.reserve(numPoints);
+
+        for (int i = 0; i < length; i += 2)
         {
-            val pt = jsArray[i];
-            points.push_back({pt["x"].as<float>(),
-                              pt["y"].as<float>()});
+            points.push_back({jsFloat32Array[i].as<float>(),
+                              jsFloat32Array[i + 1].as<float>()});
         }
+
         return points;
     }
 };
@@ -250,5 +454,6 @@ EMSCRIPTEN_BINDINGS(MicroExpressionEngineModule)
 
     class_<MicroExpressionAnalyzer>("MicroExpressionAnalyzer")
         .constructor<>()
-        .function("analyzeLandmarks", &MicroExpressionAnalyzer::analyzeLandmarks);
+        .function("analyzeLandmarks", &MicroExpressionAnalyzer::analyzeLandmarks)
+        .function("resetBaseline", &MicroExpressionAnalyzer::resetBaseline); // Экспорт метода в JS/TS
 }
