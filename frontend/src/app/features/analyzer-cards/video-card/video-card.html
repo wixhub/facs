@@ -1,0 +1,18 @@
+<div class="video-header-row">
+  <div class="badge info">Source: {{ activeSource().toUpperCase() }}</div>
+  <div class="badge status">FPS: {{ fps() }}</div>
+
+  <!-- Source Toggle Controls -->
+  <div class="source-switcher">
+    <button [class.active-btn]="activeSource() === 'demo'" (click)="setSource('demo')">
+      Demo Video
+    </button>
+    <button [class.active-btn]="activeSource() === 'webcam'" (click)="setSource('webcam')">
+      Webcam
+    </button>
+  </div>
+</div>
+
+<div class="video-wrapper">
+  <video #videoElement autoplay playsinline muted></video>
+</div>

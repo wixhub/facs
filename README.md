@@ -101,7 +101,7 @@ Open your browser and navigate to `http://localhost:4200` to start analyzing mic
 
 ## 📄 Demo Video Source
 
-The default sample video used for testing is provided courtesy of Pexels under the Pexels Free License.
+The default sample video used for testing is provided courtesy of [Pexels](https://www.pexels.com/) under the Pexels Free License.
 
 ## 📜 Academic Attribution & License
 
