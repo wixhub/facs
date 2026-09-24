@@ -31,6 +31,9 @@ export class VideoCard implements OnInit, OnDestroy {
   readonly isTracking = signal<boolean>(false);
   readonly fps = signal<number>(0);
 
+  // Signal to store current telemetry metrics (used for calibration overlay in HTML)
+  readonly currentMetrics = signal<ExpressionMetrics | null>(null);
+
   private mediaStream: MediaStream | null = null;
   private animationFrameId: number | null = null;
   private faceLandmarker: FaceLandmarker | null = null;
@@ -77,6 +80,12 @@ export class VideoCard implements OnInit, OnDestroy {
     if (this.activeSource() === source && this.isTracking()) return;
 
     this.activeSource.set(source);
+    this.currentMetrics.set(null);
+
+    if (source === 'webcam') {
+      this.wasmService.resetBaseline(); // Triggers calibration only for webcam
+    }
+
     this.stopTracking();
     await this.initializeVideoSource(source);
   }
@@ -142,8 +151,12 @@ export class VideoCard implements OnInit, OnDestroy {
 
           // Pass extracted landmarks into C++ WebAssembly engine
           const telemetry = this.wasmService.analyzeLandmarks(landmarks);
+
+          // Store in signal and broadcast telemetry to parent component
+          this.currentMetrics.set(telemetry);
           this.metricsChange.emit(telemetry);
         } else {
+          this.currentMetrics.set(null);
           this.metricsChange.emit(null);
         }
 

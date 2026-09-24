@@ -15,4 +15,13 @@
 
 <div class="video-wrapper">
   <video #videoElement autoplay playsinline muted></video>
+
+  @if (
+    activeSource() === 'webcam' && currentMetrics()?.dominantEmotion === 'Calibrating baseline...'
+  ) {
+    <div class="calibration-overlay">
+      <div class="spinner"></div>
+      <p>Calibrating baseline... Please look straight with a neutral face.</p>
+    </div>
+  }
 </div>
