@@ -1,4 +1,6 @@
-# Micro Expression Engine 🔬🧠 C++20 / WebAssembly / Angular
+# Micro Expression Engine 🔬🧠
+
+> C++20 -> WebAssembly -> Angular 22
 
 A high-performance, real-time facial telemetry and micro-expression analysis web application. The core detection engine is written in **C++20**, compiled to **WebAssembly (WASM)** via **Emscripten** and **Ninja**, and integrated into a modern **Angular** frontend using Signals and reactive components.
 
